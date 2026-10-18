@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   EventSchema,
+  ResolveRequestSchema,
+  SessionLookupResponseSchema,
   SessionResponseSchema,
   SelectionDraftSchema,
   parseCommand,
@@ -30,6 +32,20 @@ describe("command validation", () => {
   });
   it("limits frame size before parsing", () => {
     expect(() => parseCommand("x".repeat(60001))).toThrow("too large");
+  });
+});
+
+describe("session lookup validation", () => {
+  it("supports read-only lookup and keeps existing create requests compatible", () => {
+    const url = "https://page.test/article";
+    expect(ResolveRequestSchema.parse({ url })).toEqual({ url, create: true });
+    expect(ResolveRequestSchema.parse({ url, create: false })).toEqual({ url, create: false });
+    expect(ResolveRequestSchema.safeParse({ url, create: "false" }).success).toBe(false);
+  });
+
+  it("accepts a missing conversation without treating an incomplete response as one", () => {
+    expect(SessionLookupResponseSchema.parse(null)).toBeNull();
+    expect(SessionLookupResponseSchema.safeParse({ id: "test" }).success).toBe(false);
   });
 });
 

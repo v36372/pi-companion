@@ -1,8 +1,9 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { SessionClient } from "../src/extension/client.ts";
-import type { Prompt } from "../src/shared/protocol.ts";
+import { ResolveRequestSchema, type Prompt } from "../src/shared/protocol.ts";
 
 class Socket {
+  static CONNECTING = 0;
   static OPEN = 1;
   static all: Socket[] = [];
   readyState = 0;
@@ -97,6 +98,109 @@ beforeEach(() => {
 afterEach(() => {
   for (const value of clients.splice(0)) value.close();
   vi.unstubAllGlobals();
+});
+
+function emptyServer() {
+  const attempts: boolean[] = [];
+  let exists = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = ResolveRequestSchema.parse(JSON.parse(String(init?.body)));
+      attempts.push(body.create);
+      exists ||= body.create;
+
+      return Response.json(
+        exists ? { id: "session", ticket: "ticket", canonicalUrl: body.url } : null,
+      );
+    }),
+  );
+
+  return attempts;
+}
+
+describe("session creation", () => {
+  it("only looks up history on open, then creates and sends the first message", async () => {
+    const attempts = emptyServer();
+    const value = client();
+    await value.start();
+    expect(attempts).toEqual([false]);
+    expect(Socket.all).toHaveLength(0);
+    expect(records).toEqual({});
+
+    await value.send("First message", "Page");
+    await vi.waitFor(() => expect(Socket.all).toHaveLength(1));
+    expect(attempts).toEqual([false, true]);
+    expect(Object.values(records)).toHaveLength(1);
+    Socket.all[0].open();
+    expect(Socket.all[0].sent.map((frame) => JSON.parse(frame).text)).toEqual(["First message"]);
+  });
+
+  it("creates immediately for a right-click selection, without sending a prompt", async () => {
+    const attempts = emptyServer();
+    await client().start(true);
+    expect(attempts).toEqual([true]);
+    expect(Socket.all).toHaveLength(1);
+    Socket.all[0].open();
+    expect(Socket.all[0].sent).toEqual([]);
+    expect(records).toEqual({});
+  });
+
+  it("restores an existing conversation on open without asking to create one", async () => {
+    await client().start();
+    expect(Socket.all).toHaveLength(1);
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toEqual({
+      url: "https://page.test/article",
+      create: false,
+    });
+  });
+
+  it("upgrades an in-flight history lookup when the user sends, with only one socket", async () => {
+    const lookup = Promise.withResolvers<Response>();
+    vi.mocked(fetch).mockImplementationOnce(() => lookup.promise);
+    const value = client();
+    const starting = value.start();
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    await value.send("Do not lose me", "Page");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    lookup.resolve(Response.json(null));
+    await starting;
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body)).create).toBe(true);
+    expect(Socket.all).toHaveLength(1);
+    Socket.all[0].open();
+    expect(Socket.all[0].sent.map((frame) => JSON.parse(frame).text)).toEqual(["Do not lose me"]);
+  });
+
+  it("creates directly when restoring an unsent message after a browser restart", async () => {
+    const attempts = emptyServer();
+    records["outbox:shared-url:queued-request"] = {
+      type: "prompt",
+      requestId: "queued-request",
+      text: "Saved offline",
+    };
+    await client().start();
+    expect(attempts).toEqual([true]);
+    Socket.all[0].open();
+    expect(JSON.parse(Socket.all[0].sent[0]).requestId).toBe("queued-request");
+  });
+
+  it("wakes other open panels when the first message is saved", async () => {
+    const attempts = emptyServer();
+
+    const a = client(),
+      b = client();
+
+    await Promise.all([a.start(), b.start()]);
+    expect(attempts).toEqual([false, false]);
+    expect(Socket.all).toHaveLength(0);
+    await a.send("Shared first message", "Page");
+    await vi.waitFor(() => expect(Socket.all).toHaveLength(2));
+    expect(attempts).toEqual([false, false, true, true]);
+    Socket.all.forEach((socket) => socket.open());
+    expect(Socket.all.map((socket) => socket.sent.length)).toEqual([1, 1]);
+    expect(Socket.all[0].sent[0]).toBe(Socket.all[1].sent[0]);
+  });
 });
 
 describe("durable browser outbox", () => {

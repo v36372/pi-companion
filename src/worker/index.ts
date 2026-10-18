@@ -116,7 +116,9 @@ export default {
         const body = ResolveRequestSchema.parse(JSON.parse(new TextDecoder().decode(bytes)));
         const canonicalUrl = cleanUrl(body.url);
         const id = await sessionKey(canonicalUrl);
-        await env.SESSIONS.getByName(id).bindUrl(canonicalUrl);
+
+        if (!(await env.SESSIONS.getByName(id).bindUrl(canonicalUrl, body.create)))
+          return json(null);
 
         return json({ id, canonicalUrl, ticket: await ticket(env.COMPANION_TOKEN, id) });
       }

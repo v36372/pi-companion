@@ -176,6 +176,12 @@ try {
     ),
   );
   assert.equal((await stats()).toolCalls.at(-1).name, "fixture_echo");
+
+  const nativeRequest = (await stats(url)).requests.at(-2);
+  assert.deepEqual(nativeRequest.tools.map((tool) => tool.function.name), [
+    "mcp__executor__fixture_echo",
+  ]);
+  assert.deepEqual(nativeRequest.tools[0].function.parameters.required, ["value"]);
   console.log(
     "PASS actual OAuth PKCE exchange, credential DO RPC, MCP discovery and SSE tool call",
   );

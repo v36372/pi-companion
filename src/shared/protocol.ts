@@ -42,13 +42,18 @@ export const EventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("error"), message: z.string(), requestId: RequestId.optional() }),
 ]);
 
-export const ResolveRequestSchema = z.object({ url: z.string().max(8192) });
+export const ResolveRequestSchema = z.object({
+  url: z.string().max(8192),
+  create: z.boolean().default(true),
+});
 
 export const SessionResponseSchema = z.object({
   id: z.string(),
   canonicalUrl: z.string(),
   ticket: z.string(),
 });
+
+export const SessionLookupResponseSchema = SessionResponseSchema.nullable();
 
 export const OAuthStartSchema = z.object({ connected: z.boolean(), url: z.string().optional() });
 export const ConnectionSchema = z.object({ connected: z.boolean() });
@@ -72,7 +77,10 @@ export type Snapshot = z.infer<typeof SnapshotSchema>;
 export type Event = z.infer<typeof EventSchema>;
 
 export type HttpResult = z.infer<
-  typeof SessionResponseSchema | typeof OAuthStartSchema | typeof StatusSchema | typeof ErrorSchema
+  | typeof SessionLookupResponseSchema
+  | typeof OAuthStartSchema
+  | typeof StatusSchema
+  | typeof ErrorSchema
 >;
 
 export type JsonValue = z.infer<ReturnType<typeof z.json>>;

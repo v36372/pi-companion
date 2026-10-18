@@ -165,7 +165,8 @@ function App() {
       );
 
       client.current = connection;
-      await connection.start();
+      // Selection actions create immediately; ordinary chat only creates on the first send.
+      await connection.start(!!selectionId);
     })().catch((e) => {
       if (alive) setError(String(e));
     });

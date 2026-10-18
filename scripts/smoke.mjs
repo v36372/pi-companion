@@ -44,8 +44,14 @@ try {
           "Access-Control-Allow-Methods": "*",
         },
       });
-    const url = request.postDataJSON().url;
+    const { url, create } = request.postDataJSON();
     const key = createHash("sha256").update(url).digest("hex");
+
+    if (!sessions.has(key) && create === false)
+      return route.fulfill({
+        json: null,
+        headers: { "Access-Control-Allow-Origin": "*" },
+      });
 
     if (!sessions.has(key)) sessions.set(key, empty());
 
@@ -91,10 +97,13 @@ try {
 
   const panel = await context.newPage();
   await panel.goto(`chrome-extension://${id}/sidepanel.html?tabId=${tabId}`);
-  await panel.getByText("Connected", { exact: true }).waitFor();
+  await panel.getByText("Ready", { exact: true }).waitFor();
+  assert.equal(sessions.size, 0, "Opening chat must not create a session");
   await panel.getByRole("textbox", { name: "Message" }).fill("Explain this article");
   await panel.getByRole("button", { name: "Send" }).click();
   await panel.getByText("Test response.", { exact: true }).waitFor();
+
+  assert.equal(sessions.size, 1, "The first message creates the session");
 
   const panelOptions = await worker.evaluate(
     (id) => chrome.sidePanel.getOptions({ tabId: id }),
@@ -108,6 +117,8 @@ try {
       document.querySelector(".page")?.textContent === "https://page.test/different" &&
       !document.body.textContent.includes("Test response."),
   );
+  await panel.getByText("Ready", { exact: true }).waitFor();
+  assert.equal(sessions.size, 1, "Navigating with chat open must not create empty sessions");
   await source.goto("https://page.test/article");
   await panel.getByText("Test response.", { exact: true }).waitFor();
   await worker.evaluate(() =>
@@ -124,6 +135,21 @@ try {
   await ask.locator(".selection").getByText("Selected quotation", { exact: false }).waitFor();
   await ask.getByText("Connected", { exact: true }).waitFor();
   assert.equal(await ask.getByText("Test response.", { exact: true }).count(), 1);
+  await worker.evaluate(() =>
+    chrome.storage.session.set({
+      "selection:fresh": {
+        url: "https://page.test/fresh-selection",
+        title: "Fresh selection",
+        selection: "A new selection",
+      },
+    }),
+  );
+  const freshAsk = await context.newPage();
+  await freshAsk.goto(`chrome-extension://${id}/ask.html?selection=fresh`);
+  await freshAsk.getByText("Connected", { exact: true }).waitFor();
+  assert.equal(sessions.size, 2, "A selection action creates a session before any message");
+  await freshAsk.close();
+
   await mkdir("dist/screenshots", { recursive: true });
   await panel.screenshot({ path: "dist/screenshots/sidepanel.png" });
   await ask.screenshot({ path: "dist/screenshots/selection.png" });

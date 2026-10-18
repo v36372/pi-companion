@@ -71,11 +71,30 @@ export async function withMcp<T>(
   }
 }
 
-export async function listMcp(env: Env, signal: AbortSignal, cursor?: string) {
-  return withMcp(env, signal, async (client) => ({
-    instructions: client.getInstructions(),
-    ...(await client.listTools(cursor ? { cursor } : {}, { signal, timeout: 30000 })),
-  }));
+/** Read the complete catalog in one bounded connection, then release its SSE stream. */
+export async function discoverMcp(env: Env, signal: AbortSignal) {
+  return withMcp(env, signal, async (client) => {
+    const tools: Awaited<ReturnType<Client["listTools"]>>["tools"] = [];
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+
+    do {
+      const page = await client.listTools(cursor === undefined ? {} : { cursor }, {
+        signal,
+        timeout: 30000,
+      });
+
+      tools.push(...page.tools);
+      cursor = page.nextCursor;
+
+      if (cursor !== undefined) {
+        if (cursors.has(cursor)) throw new Error("Executor repeated a tool-list cursor");
+        cursors.add(cursor);
+      }
+    } while (cursor !== undefined);
+
+    return { tools, instructions: client.getInstructions() };
+  });
 }
 
 export async function callMcp(

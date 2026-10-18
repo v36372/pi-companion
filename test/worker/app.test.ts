@@ -6,13 +6,15 @@ import {
   runInDurableObject,
 } from "cloudflare:test";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { Harness } from "@earendil-works/pi-durable";
+import { Harness, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import { openDurableObjectSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/cloudflare";
 import { agentOptions } from "../../src/worker/agent.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../../src/worker/index.ts";
+import { sessionKey } from "../../src/shared/url.ts";
 import {
   SessionResponseSchema,
+  SessionLookupResponseSchema,
   EventSchema,
   type Event,
   type Snapshot,
@@ -44,6 +46,13 @@ async function resolve(url: string) {
   expect(response.status).toBe(200);
 
   return SessionResponseSchema.parse(await response.json());
+}
+
+async function lookup(url: string) {
+  const response = await request("/api/sessions", { url, create: false });
+  expect(response.status).toBe(200);
+
+  return SessionLookupResponseSchema.parse(await response.json());
 }
 
 async function connect(session: { id: string; ticket: string }) {
@@ -124,6 +133,44 @@ function mockModel(interruptFirst?: (signal: AbortSignal | null | undefined) => 
 }
 
 describe("personal durable sessions", () => {
+  it("does not create a conversation or start work when looking up a new URL", async () => {
+    const modelRequests = mockModel();
+    const url = "https://page.test/not-started";
+    expect(await lookup(url)).toBeNull();
+    const stub = bindings.SESSIONS.getByName(await sessionKey(url));
+    await runInDurableObject(stub, async (instance, state) => {
+      expect(
+        await instance["harness"].conversation(ROOT_CONVERSATION_ID, BACKGROUND_CONTEXT),
+      ).toBeUndefined();
+      expect(await state.storage.getAlarm()).toBeNull();
+      expect(
+        (
+          await instance.fetch(
+            new Request("https://internal/socket", {
+              headers: { Upgrade: "websocket" },
+            }),
+          )
+        ).status,
+      ).toBe(404);
+    });
+    await evictDurableObject(stub);
+    expect(await lookup(url)).toBeNull();
+    expect(modelRequests).toHaveLength(0);
+  });
+
+  it("creates on demand and returns existing sessions from a read-only lookup", async () => {
+    const modelRequests = mockModel();
+    const url = "https://page.test/on-demand";
+    expect(await lookup(url)).toBeNull();
+    const created = await resolve(url);
+    const found = await lookup(url + "?utm_source=mail");
+    expect(found?.id).toBe(created.id);
+    expect(modelRequests).toHaveLength(0);
+    const viewer = await connect(created);
+    expect((await viewer.next()).type).toBe("snapshot");
+    viewer.socket.close(1000);
+  });
+
   it("rejects unauthenticated calls and forged socket tickets", async () => {
     expect(
       (await worker.fetch(new Request("https://test/api/sessions", { method: "POST" }), bindings))
@@ -197,7 +244,9 @@ describe("personal durable sessions", () => {
     a.socket.close(1000);
     b.socket.close(1000);
     await evictDurableObject(bindings.SESSIONS.getByName(session.id));
-    const resolved = await resolve("https://page.test/article");
+    const resolved = await lookup("https://page.test/article");
+
+    if (!resolved) throw new Error("Existing conversation was not found");
     const restored = await connect(resolved);
     const snapshot = await restored.snapshot((s) => s.messages.some((m) => m.role === "assistant"));
     expect(snapshot.messages.filter((m) => m.role === "user")).toHaveLength(1);

@@ -185,13 +185,13 @@ http
         const last = input.messages.at(-1);
         let tool;
 
-        if (last.role === "user" && last.content.includes("CALL_MCP_FIXTURE"))
-          tool = { name: "mcp_list_tools", arguments: "{}" };
-        else if (last.role === "tool" && last.content.includes('"tools":['))
-          tool = {
-            name: "mcp_call_tool",
-            arguments: JSON.stringify({ name: "fixture_echo", arguments: { value: "hello" } }),
-          };
+        if (last.role === "user" && last.content.includes("CALL_MCP_FIXTURE")) {
+          const name = "mcp__executor__fixture_echo";
+
+          if (!input.tools?.some((entry) => entry.function.name === name))
+            throw new Error("The native MCP fixture tool was not offered to the model");
+          tool = { name, arguments: JSON.stringify({ value: "hello" }) };
+        }
 
         if (tool)
           return stream(

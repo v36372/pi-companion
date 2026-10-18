@@ -3,8 +3,8 @@
 A personal Chrome extension backed by **Pi Durable on Cloudflare or local celld**. The extension is the UI; the agent runs in a Durable Object, not in Chrome's short-lived service worker.
 
 - **One cleaned URL → one session Durable Object.** Two tabs at the same URL share a conversation. Navigate away and back to resume it.
-- **Alt+Shift+P** or the toolbar button opens a native, tab-scoped side-panel chat.
-- Select text → right-click → **Ask Companion about selection** opens an extension-owned dialog. The selection stays bound to its original URL.
+- **Alt+Shift+P** or the toolbar button opens a native, tab-scoped side-panel chat. Existing conversations load immediately; a new one is created only when you send your first message.
+- Select text → right-click → **Ask Companion about selection** opens an extension-owned dialog and creates or restores that URL's session immediately. The selection stays bound to its original URL; the model runs only after you send a question.
 - Conversation and **Executor MCP tools only**. No DOM extraction, browser actions, shell, filesystem tools, or automatic page uploads.
 - Executor OAuth with PKCE; access/refresh tokens stay in a separate account Durable Object.
 - OpenAI-compatible **Chat Completions** streaming, with base URL, model ID, and API key configured as Worker secrets.
@@ -89,7 +89,7 @@ Cleaning removes known trackers (`utm_*`, `fbclid`, `gclid`, etc.), plain docume
 
 Different query order remains distinct intentionally: aggressive normalization can merge different app states or signed URLs. If an application uses a bare hash as its router, adapt this policy before using it there. Changing the policy requires an identity migration to preserve existing sessions.
 
-There is no browsing-history scanner. With chat closed, navigation creates no objects. While a panel is open it follows navigation and attaches the corresponding session, but only a submitted message starts a model run. Navigating away does not cancel work in the previous URL's object.
+There is no browsing-history scanner. With chat closed, navigation creates no objects. An open panel follows navigation and looks up existing conversations without creating new ones. Its first submitted message creates the conversation if needed; a selection context-menu action creates it immediately. Checking a URL with no conversation may wake its backend object to inspect storage, but does not create a Pi conversation, store its URL, discover tools, or call the model. Existing sessions can resume unfinished work when reattached. Navigating away does not cancel work in the previous URL's object.
 
 ## Durability and boundaries
 
@@ -105,6 +105,7 @@ URL Session DO → Account DO (token access/serialized refresh) → Executor MCP
 - A per-request Chrome local-storage outbox survives panel/browser restarts. Multiple tabs can safely resend the same request ID; Pi deduplicates it.
 - Recovery alarms are armed before admitting work. A 60-second heartbeat resumes unfinished tasks even without an open browser. Idle sessions delete their alarms. Both Pi 1.3.0 cache-retention timers are disabled so idle objects can hibernate.
 - Reconnection restores committed state, including partial replies. The first UI uses bounded snapshots rather than delta replication. It shows the latest 60 visible messages of the active context, with an 80,000-character overall display budget; the durable transcript is not deleted by this limit.
+- Executor's own MCP tools (such as `skills`, `search`, `call`, and `execute`) are discovered automatically and exposed directly as `mcp__executor__…`, with their input schemas and server instructions. Discovery follows every catalog page and refreshes before prompts and recovery; there are no generic model-facing list/call wrappers. Chat still works without linking Executor.
 - MCP discovery is replay-safe. **MCP tool calls are not automatically replayed** after interruption, because the remote action may already have happened. This is not an exactly-once guarantee for external effects. Confirm remote status before retrying a mutation.
 - Executor approval/input requests and connection links are relayed in conversation. The agent is instructed to wait for an explicit user reply. This is not an independent application-level approval enforcement system; use Executor's server-side authorization controls for sensitive tools. Native MCP form/URL elicitation, MCP Apps, and local stdio servers are not implemented.
 - OAuth state is single-use, expires after ten minutes, and is validated together with the issuer and PKCE verifier. Refreshes are serialized across URL sessions. Changing the configured MCP URL or callback origin invalidates local credentials; reconnect afterwards.

@@ -3,7 +3,7 @@ import { z } from "zod";
 import {
   EventSchema,
   PromptSchema,
-  SessionResponseSchema,
+  SessionLookupResponseSchema,
   parseCommand,
 } from "../shared/protocol.ts";
 import { api, type Settings } from "./settings.ts";
@@ -15,6 +15,9 @@ export class SessionClient {
   private timer?: ReturnType<typeof setTimeout>;
   private retry = 0;
   private pending = new Map<string, Prompt>();
+  private create = false;
+  private ready = false;
+  private connecting?: Promise<void>;
   constructor(
     private config: Settings,
     private url: string,
@@ -29,9 +32,12 @@ export class SessionClient {
   private remember(key: string, command: Prompt) {
     if (key !== this.key(command.requestId) || this.pending.has(command.requestId)) return;
     this.pending.set(command.requestId, command);
+    this.create = true;
 
-    if (this.socket?.readyState === WebSocket.OPEN && !this.stopped)
-      this.socket.send(JSON.stringify(command));
+    if (this.stopped) return;
+
+    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(command));
+    else if (this.ready) void this.connect();
   }
   private storageChanged = (
     changes: Record<string, chrome.storage.StorageChange>,
@@ -54,7 +60,8 @@ export class SessionClient {
       }
     }
   };
-  async start() {
+  async start(create = false) {
+    this.create = create;
     chrome.storage.onChanged.addListener(this.storageChanged);
     const records = await chrome.storage.local.get(null);
 
@@ -69,17 +76,47 @@ export class SessionClient {
         this.onError("An invalid saved message was ignored. Discard unsent messages to clear it.");
     }
 
+    this.ready = true;
     await this.connect();
   }
-  private async connect() {
+  private connect(): Promise<void> {
+    if (
+      this.stopped ||
+      this.socket?.readyState === WebSocket.OPEN ||
+      this.socket?.readyState === WebSocket.CONNECTING
+    )
+      return Promise.resolve();
+    clearTimeout(this.timer);
+    this.connecting ??= this.open().finally(() => {
+      this.connecting = undefined;
+    });
+
+    return this.connecting;
+  }
+  private async open(): Promise<void> {
     try {
       this.onStatus("Connecting…");
 
-      const session = await api(this.config, "/api/sessions", SessionResponseSchema, {
+      const create = this.create;
+
+      const session = await api(this.config, "/api/sessions", SessionLookupResponseSchema, {
         url: this.url,
+        create,
       });
 
       if (this.stopped) return;
+
+      if (!session) {
+        // A send can arrive while the read-only lookup is in flight. Upgrade that lookup once.
+        if (!create && this.create) return this.open();
+
+        if (create) throw new Error("The server did not create the session");
+        this.onStatus("Ready");
+
+        return;
+      }
+
+      this.create = true;
       const endpoint = new URL(this.config.backend + "/api/sessions/" + session.id + "/socket");
       endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
       endpoint.searchParams.set("ticket", session.ticket);
