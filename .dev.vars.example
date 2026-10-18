@@ -1,0 +1,6 @@
+# Copy to .dev.vars. Never commit it.
+# Generate: openssl rand -hex 32. Paste this token into the extension settings too.
+COMPANION_TOKEN=
+MODEL_BASE_URL=https://your-provider.example/v1
+MODEL_ID=your-model-id
+MODEL_API_KEY=

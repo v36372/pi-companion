@@ -1,0 +1,33 @@
+{
+  "name": "companion",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SESSIONS",
+        "class_name": "Session",
+      },
+      {
+        "name": "ACCOUNT",
+        "class_name": "Account",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Session", "Account"],
+    },
+  ],
+  "vars": {
+    "PUBLIC_ORIGIN": "http://localhost:8787",
+    "MCP_URL": "https://executor.7hkem10.win/mcp?elicitation_mode=model",
+    "MODEL_CONTEXT_WINDOW": "128000",
+    "MODEL_MAX_TOKENS": "8192",
+  },
+  "observability": {
+    "enabled": false,
+  },
+}

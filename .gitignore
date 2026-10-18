@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+.env*
+!.env.example
+pi/
+ultimate/
+pi-durable-cloudflare/
+.local/
+.celld/
+wrangler.celld.local.json
